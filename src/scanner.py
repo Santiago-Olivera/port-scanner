@@ -1,24 +1,7 @@
 import socket
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import print_status
-
-# Dictionary mapping common ports to their services
-COMMON_PORTS = {
-    20: "FTP",
-    21: "FTP",
-    22: "SSH",
-    23: "Telnet",
-    25: "SMTP",
-    53: "DNS",
-    80: "HTTP",
-    110: "POP3",
-    143: "IMAP",
-    443: "HTTPS",
-    3306: "MySQL",
-    3389: "RDP",
-    5900: "VNC",
-    8080: "HTTP-Proxy"
-}
 
 def get_service(port):
     """Returns the service name for a given port using the socket library."""
@@ -26,7 +9,6 @@ def get_service(port):
         return socket.getservbyport(port, "tcp")
     except OSError:
         return "Unknown"
-
 
 def scan_port(ip, port):
     """Attempts to connect to a given port on a target IP."""
@@ -36,18 +18,28 @@ def scan_port(ip, port):
             result = s.connect_ex((ip, port))  # Returns 0 if open
             service = get_service(port)
             if result == 0:
-                print_status(f"[OPEN] Port {port} ({service}) is open", "success")
+                return (port, f"[OPEN] Port {port} ({service}) is open", "success")
             else:
-                print_status(f"[CLOSED] Port {port} ({service}) is closed", "warning")
+                return (port, f"[CLOSED] Port {port} ({service}) is closed", "warning")
     except Exception as e:
-        print_status(f"Error scanning port {port}: {e}", "error")
+        return (port, f"Error scanning port {port}: {e}", "error")
 
 def scan(target, start_port, end_port):
     """Scans ports in the specified range for a given IP."""
     print_status(f"Scanning {target} from port {start_port} to {end_port}...", "info")
     
-    for port in range(start_port, end_port + 1):
-        scan_port(target, port)
+    with ThreadPoolExecutor(max_workers=100) as executor:
+        futures = {executor.submit(scan_port, target, port): port for port in range(start_port, end_port + 1)}
+        results = []
+        for future in as_completed(futures):
+            results.append(future.result())
+        
+        # Sort results by port number
+        results.sort(key=lambda x: x[0])
+        
+        # Print results in order
+        for port, message, status in results:
+            print_status(message, status)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple Port Scanner")
