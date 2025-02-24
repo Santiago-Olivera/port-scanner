@@ -2,16 +2,43 @@ import socket
 import argparse
 from utils import print_status
 
+# Dictionary mapping common ports to their services
+COMMON_PORTS = {
+    20: "FTP",
+    21: "FTP",
+    22: "SSH",
+    23: "Telnet",
+    25: "SMTP",
+    53: "DNS",
+    80: "HTTP",
+    110: "POP3",
+    143: "IMAP",
+    443: "HTTPS",
+    3306: "MySQL",
+    3389: "RDP",
+    5900: "VNC",
+    8080: "HTTP-Proxy"
+}
+
+def get_service(port):
+    """Returns the service name for a given port using the socket library."""
+    try:
+        return socket.getservbyport(port, "tcp")
+    except OSError:
+        return "Unknown"
+
+
 def scan_port(ip, port):
     """Attempts to connect to a given port on a target IP."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)  # Timeout for connection attempt
             result = s.connect_ex((ip, port))  # Returns 0 if open
+            service = get_service(port)
             if result == 0:
-                print_status(f"[OPEN] Port {port} is open", "success")
+                print_status(f"[OPEN] Port {port} ({service}) is open", "success")
             else:
-                print_status(f"[CLOSED] Port {port} is closed", "warning")
+                print_status(f"[CLOSED] Port {port} ({service}) is closed", "warning")
     except Exception as e:
         print_status(f"Error scanning port {port}: {e}", "error")
 
