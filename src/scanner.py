@@ -2,6 +2,8 @@ import socket
 import time
 import concurrent.futures
 import argparse
+import json
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import print_status
 
@@ -23,62 +25,57 @@ def scan_port(target, port):
         service = get_service(port)
 
         if result == 0:
-            return f"\033[92m[OPEN] Port {port} ({service}) is open - Response Time: {response_time:.2f}ms\033[0m"
+            return {"port": port, "status": "open", "service": service, "response_time": response_time}
         else:
-            return (port, response_time, service)
+            return {"port": port, "status": "closed", "service": service, "response_time": response_time}
 
 def scan_ports(target, start_port, end_port, quick_scan):
-    closed_ports = []
     results = []
-    
     ports_to_scan = COMMON_PORTS if quick_scan else list(range(start_port, end_port + 1))
     
     with ThreadPoolExecutor(max_workers=100) as executor:
         future_to_port = {executor.submit(scan_port, target, port): port for port in ports_to_scan}
         for future in as_completed(future_to_port):
-            result = future.result()
-            if isinstance(result, tuple):  # Closed port
-                closed_ports.append(result)
-            else:
-                results.append(result)
+            results.append(future.result())
     
-    # Sort open ports
-    results.sort()
-    
-    # Identify potential filtering
-    if closed_ports:
-        closed_ports.sort()  # Ensure closed ports are in order
-        closed_response_times = [rt for _, rt, _ in closed_ports]
-        if all(rt > 1000 for rt in closed_response_times):
-            results.append("\033[93m\n[WARNING] All closed ports have response times >1000ms. This may indicate a firewall or filtering.\033[0m")
-        
-        # Show all closed ports after the warning
-        for port, rt, service in closed_ports:
-            if rt > 1000:
-                results.append(f"\033[94m[FILTERED?] Port {port} ({service}) is possibly filtered - Response Time: {rt:.2f}ms\033[0m")
-            else:
-                results.append(f"\033[93m[CLOSED] Port {port} ({service}) is closed - Response Time: {rt:.2f}ms\033[0m")
-    
-    return "\n".join(results)
+    results.sort(key=lambda x: x["port"])  # Ensure results are sorted by port number
+    return results
+
+def export_results(results, file_format, filename):
+    if file_format == "json":
+        with open(filename, "w") as f:
+            json.dump(results, f, indent=4)
+    elif file_format == "csv":
+        with open(filename, "w", newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=["port", "status", "service", "response_time"])
+            writer.writeheader()
+            writer.writerows(results)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple Port Scanner")
     parser.add_argument("target", help="Target IP address to scan")
     parser.add_argument("start_port", type=int, nargs='?', default=1, help="Start of port range")
-    parser.add_argument("end_port", type=int, nargs='?', default=1024, help="End of port range (default: 1024)")
+    parser.add_argument("end_port", type=int, nargs='?', default=65535, help="End of port range")
     parser.add_argument("--quick", action="store_true", help="Perform a quick scan of common ports")
-    parser.add_argument("--full-scan", action="store_true", help="Scan the full range of 65535 ports")
+    parser.add_argument("--json", type=str, help="Export results to a JSON file")
+    parser.add_argument("--csv", type=str, help="Export results to a CSV file")
     
     args = parser.parse_args()
     
-    if args.full_scan:
-        start_port, end_port = 1, 65535
-    else:
-        start_port, end_port = args.start_port, args.end_port
-    
     if args.quick:
         print_status(f"Performing a quick scan on {args.target} for common ports...", "info")
-        print(scan_ports(args.target, None, None, quick_scan=True))
+        scan_results = scan_ports(args.target, None, None, quick_scan=True)
     else:
-        print_status(f"Scanning {args.target} from port {start_port} to {end_port}...", "info")
-        print(scan_ports(args.target, start_port, end_port, quick_scan=False))
+        print_status(f"Scanning {args.target} from port {args.start_port} to {args.end_port}...", "info")
+        scan_results = scan_ports(args.target, args.start_port, args.end_port, quick_scan=False)
+    
+    for result in scan_results:
+        status_color = "\033[92m" if result["status"] == "open" else "\033[93m"
+        print(f"{status_color}[{result['status'].upper()}] Port {result['port']} ({result['service']}) - Response Time: {result['response_time']:.2f}ms\033[0m")
+    
+    if args.json:
+        export_results(scan_results, "json", args.json)
+        print(f"\033[94mResults saved to {args.json} (JSON format)\033[0m")
+    if args.csv:
+        export_results(scan_results, "csv", args.csv)
+        print(f"\033[94mResults saved to {args.csv} (CSV format)\033[0m")
